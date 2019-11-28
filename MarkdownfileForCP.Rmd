@@ -1,0 +1,122 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Diandian Yi"
+date: "11/27/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+
+This project investigated what and how the factors affecting the manner in which the subjects did the exercise by using the Human Activity recognition data <http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>.Given the possibility nowadays that we can collect a large amount of data about personal activity relatively inexpensively using devices such as Jawbone Up, Nike Fuelband, and Fitbit, this data is from accelerometers on the belt, forearm, arm and dumbell of 6 participants. These participants(subjects) were asked to perform barbell lifts correctly and incorrectly in 5 different ways. In the training set, the manner(how well they do it) has been recorded as a factor variable "classe" with 5 levels: A, B, C, D, E.
+
+After importing and cleaning the data, I built models to look into the relationship between classe and other variables in the dataset. I used decision trees and random forest technique. Repeated k-fold cross validation was employed to check the accuracy for both models. To balance the accuracy of the model and the computational demand of the model, I used random search to tune one parameter mtry in the random forest model.
+
+# Clean the data and some exploratory analysis
+
+To import and clean the data, I ruled out all the variables in original training dataset that have no variation and contain lots of null values. Then I changed the data type of column named "cvtd_timestamp" into date.
+
+1. Import the data
+```{r import, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+getwd()
+setwd("/Users/yidiandian/CourseraProjects/PracticalMachineLearning")
+library(ggplot2)
+library(caret)
+library(corrplot)
+library(tidyverse)
+library(e1071)
+library(rattle)
+library(randomForest)
+library(mlbench)
+
+pml_testing <- read.csv("./pml-testing.csv")
+pml_training <- read.csv("./pml-training.csv")
+```
+
+2. Rule out the variables that are not near to zero value and not null
+```{r ruleout, echo=TRUE}
+nearZeroVar <- nearZeroVar(pml_training,saveMetrics = TRUE)
+nonZeroVariables <- rownames(nearZeroVar[nearZeroVar$nzv==FALSE,])
+pml_training_nonzero <- pml_training[,nonZeroVariables]
+nullcol <- sapply(pml_training_nonzero,function(x)sum(is.na(x)))
+nonullVariables <- names(nullcol[nullcol==0])
+pml_training_nonzeronull <- pml_training_nonzero[,nonullVariables]
+```
+
+3. Change the format of the timestamp column into date/time
+```{r datetype, echo=TRUE}
+pml_training_nonzeronull$cvtd_timestamp <- as.POSIXct(as.character(pml_training_nonzeronull$cvtd_timestamp),format="%d/%m/%Y %H:%M")
+```
+
+Until now, I got a clean dataset and when I look at the classifier "classe", I found basically I have a balanced classifier in the dataset.
+
+```{r lookat, echo=TRUE}
+sapply(pml_training_nonzeronull,function(x)sum(is.na(x)))
+table(pml_training_nonzeronull$classe)
+```
+
+I ran a correlation plot to see the relationship among the variables. And I included 54 variables as useful explanatory features in my model in the next step.
+
+```{r corr, echo=TRUE}
+corr.matrix <- cor(pml_training_nonzeronull[,c(6:58)])
+corrplot(corr.matrix, method="color",tl.cex=0.5,type="upper")
+pml_training_nonzeronull_features <- pml_training_nonzeronull[,c(6:59)]
+```
+
+# Model building
+
+I tried decision trees and random forest algorithm to run the model.
+
+1. Decision trees
+
+I used repeated k-fold cross validation to validate my model. For parameters I set k = 10, and repeats = 3.
+```{r dt, echo=TRUE}
+set.seed(1234)
+##repeated k-fold cross validation
+model_rpart_repeatedcv <- caret::train(classe ~ .,
+                                  data = pml_training_nonzeronull_features,
+                                  method = "rpart",
+                                  preProcess = c("scale", "center"),
+                                  trControl = trainControl(method = "repeatedcv", 
+                                               number = 10, repeats = 3))
+fancyRpartPlot(model_rpart_repeatedcv$finalModel)
+```
+
+According to the model summary, the accuracy is highest when cp = 0.03891896. But the average accuracy is only around 54%, I tried random forest to improve the accuracy.  
+```{r dt_summary, echo=TRUE}
+print(model_rpart_repeatedcv)
+```
+
+2. Random forest
+
+To balance the accuracy of the prediction of the model and the computational demand of the model, I employed k-fold cross validation and set k = 3. To tune the parameter for the random forest, I used random search to tune mtry and set tuneLength = 5. 
+```{r rf, echo=TRUE}
+control <- trainControl(method='cv', 
+                        number= 3, 
+                        search = 'random')
+
+##Random generate 5 mtry values with tuneLength = 5
+set.seed(1)
+model_rf_random <- train(classe ~ .,
+                   data = pml_training_nonzeronull_features,
+                   method = 'rf',
+                   tuneLength  = 5, 
+                   trControl = control)
+```
+
+According to the model summary, the accuracy is highest when mtry = 23. With this parameter, the accuracy is 99.72480%, and the Kappa equals 99.65189%.  
+```{r rf_summary, echo=TRUE}
+print(model_rf_random)
+```
+
+# Prediction
+
+Based on the model with random forest algorithm, the prediction for the test dataset is like below:
+
+```{r rf_prediction, echo=TRUE}
+Prediction_rf <- predict(model_rf_random, newdata = pml_testing)
+Prediction_rf
+```
